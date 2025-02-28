@@ -1,4 +1,5 @@
 import os
+from collections import Counter
 
 import biosppy
 import wfdb
@@ -37,9 +38,63 @@ TARGET_FS = 360
 SEGMENT_LENGTH = 300  # Długość segmentu w próbkach (QRS w środku)
 
 # 🔹 Mapowanie etykiet
-LABEL_MAP = {'N': 0, 'V': 1, 'A': 2, 'L': 3, 'R': 4 , "J":5 , "j":6 , "F":7 , "f":8 , "S" :9 }
-LABEL_NAMES = list(LABEL_MAP.keys())  # Kolejność klas
-NUM_CLASSES = len(LABEL_MAP)
+LABEL_MAP = {
+    'N': 0,  # Normal Beats (N)
+    'L': 0,  # Left Bundle Branch Block Beat
+    'R': 0,  # Right Bundle Branch Block Beat
+    'e': 0,  # Atrial Escape Beat
+    'j': 0,  # Nodal (Junctional) Escape Beat
+
+    'A': 1,  # Atrial Premature Beat (SVEB)
+    'a': 1,  # Aberrated Atrial Premature Beat (SVEB)
+    'J': 1,  # Nodal (Junctional) Premature Beat (SVEB)
+    'S': 1,  # Supraventricular Premature Beat (SVEB)
+
+    'V': 2,  # Premature Ventricular Contraction (VEB)
+    'E': 2,  # Ventricular Escape Beat (VEB)
+
+    'F': 3,  # Fusion of Ventricular and Normal Beat (Fusion Class)
+
+    'P': 4,   # Paced Beat (Other)
+    'f': 4,  # Fusion of Paced and Normal Beat (Fusion Class)
+    'Q': 4  # Unclassified Beats (Other)
+
+}
+
+NUM_CLASSES = len(set(LABEL_MAP.values()))
+
+
+def extract_annotations(db_path):
+    """
+    Ekstrakcja wszystkich adnotacji z bazy INCARTDB i policzenie ich ilości.
+    :param db_path: Ścieżka do folderu zawierającego pliki .atr
+    :return: Posortowany słownik adnotacji i ich liczności
+    """
+    annotation_counts = Counter()
+
+    # Pobranie listy plików z rozszerzeniem .atr
+    records = [f.split('.')[0] for f in os.listdir(db_path) if f.endswith('.atr')]
+
+    for record in records:
+        try:
+            # Wczytanie adnotacji
+            annotation = wfdb.rdann(os.path.join(db_path, record), 'atr')
+            annotation_counts.update(annotation.symbol)
+        except Exception as e:
+            print(f"Błąd podczas przetwarzania {record}: {e}")
+
+    # Posortowanie po liczności malejąco
+    sorted_annotations = dict(sorted(annotation_counts.items(), key=lambda item: item[1], reverse=True))
+
+    return sorted_annotations
+
+# Ścieżka do INCARTDB
+INCARTDB_PATH = "C:/Users/msztu/Documents/EKG3/incartdb/"
+annotations = extract_annotations(INCARTDB_PATH)
+
+# Wyświetlenie wyników
+for symbol, count in annotations.items():
+    print(f"{symbol}: {count}")
 
 
 def detect_qrs_biosppy(ecg_signal, fs):
@@ -104,7 +159,7 @@ def filter_ecg(signal, fs):
 
 
 def plot_confusion_matrix(y_true, y_pred, labels):
-    """ Rysuje macierz błędów """
+    """Rysuje macierz błędów."""
     cm = confusion_matrix(y_true, y_pred)
     plt.figure(figsize=(8, 6))
     sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=labels, yticklabels=labels)
@@ -112,7 +167,6 @@ def plot_confusion_matrix(y_true, y_pred, labels):
     plt.ylabel("Actual")
     plt.title("Confusion Matrix")
     plt.show()
-
 
 
 
@@ -131,10 +185,15 @@ def visualize_qrs_peak(segment, segment_id, qrs_position):
 
 
 
-def balance_classes_oversampling(X, y):
-    """🔄 Oversampling klas mniejszościowych do liczby próbek klasy dominującej."""
+def balance_classes_oversampling(X, y, noise_level=0.01):
+    """🔄 Oversampling klas mniejszościowych z dodanym szumem do liczby próbek klasy dominującej."""
     ros = RandomOverSampler(sampling_strategy='auto', random_state=42)
     X_resampled, y_resampled = ros.fit_resample(X.reshape(len(X), -1), y)
+
+    # Dodanie szumu Gaussian Noise do nowych próbek
+    noise = np.random.normal(0, noise_level, X_resampled.shape)
+    X_resampled += noise  # Modyfikacja tylko nowych próbek
+
     return X_resampled.reshape(len(X_resampled), SEGMENT_LENGTH), y_resampled
 
 def balance_classes(X, y, class_to_reduce=0, reduction_factor=0.5):
@@ -204,35 +263,30 @@ def load_ecg_data(db_path, record_ids):
 ### 🔥 **4. Tworzenie modelu CNN+LSTM**
 def build_cnn_lstm(input_shape, num_classes):
     model = models.Sequential([
-
-        layers.Masking(mask_value=0, input_shape=(SEGMENT_LENGTH, 1)),
-
-        layers.Conv1D(64, kernel_size=11, padding='same', input_shape=input_shape),
+        layers.Conv1D(128, kernel_size=9, padding='same', activation='relu', input_shape=input_shape),
         layers.BatchNormalization(),
-        layers.ReLU(),
         layers.MaxPooling1D(pool_size=2),
 
-        layers.Conv1D(128, kernel_size=7, padding='same'),
+        layers.Conv1D(256, kernel_size=7, padding='same', activation='relu'),
         layers.BatchNormalization(),
-        layers.ReLU(),
         layers.MaxPooling1D(pool_size=2),
 
-        layers.Conv1D(256, kernel_size=5, padding='same'),
+        layers.Conv1D(512, kernel_size=5, padding='same', activation='relu'),
         layers.BatchNormalization(),
-        layers.ReLU(),
         layers.MaxPooling1D(pool_size=2),
 
+        layers.LSTM(128, return_sequences=True),
         layers.LSTM(64, return_sequences=False),
+
         layers.Dense(128, activation='relu'),
         layers.Dropout(0.5),
         layers.Dense(num_classes, activation='softmax')
     ])
 
-    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
+    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.0005),
                   loss='categorical_crossentropy',
                   metrics=['accuracy', tf.keras.metrics.Precision(), tf.keras.metrics.Recall()])
     return model
-
 
 
 
@@ -262,52 +316,36 @@ def load_all_ecg_data(mitdb_path, svdb_path):
 
     return X, y
 
-### 🔥 **5. Trening modelu i generowanie statystyk**
 def train_model():
-
     print("Czy TensorFlow widzi GPU?", tf.config.list_physical_devices('GPU'))
-
 
     # Wczytanie danych z MITDB i SVDB
     X, y = load_all_ecg_data(MITDB_PATH, SVDB_PATH)
 
+    #X, y = balance_classes(X, y, class_to_reduce=0, reduction_factor=0.8)
+    X, y = balance_classes_oversampling(X, y)
 
-    X, y = balance_classes(X, y, class_to_reduce=0, reduction_factor=0.7)
-    X, y = balance_classes_oversampling(X,y)
-
-
-    # Podział na zbiory treningowe, walidacyjne i testowe
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, stratify=y, random_state=42)
     X_train, X_val, y_train, y_val = train_test_split(X_train, y_train, test_size=0.1, stratify=y_train, random_state=42)
 
-    # Reshape dla CNN
     X_train, X_val, X_test = X_train[..., np.newaxis], X_val[..., np.newaxis], X_test[..., np.newaxis]
     y_train, y_val, y_test = to_categorical(y_train, NUM_CLASSES), to_categorical(y_val, NUM_CLASSES), to_categorical(y_test, NUM_CLASSES)
 
-    # 📌 CALLBACKS
     early_stopping = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=3, restore_best_weights=True)
     reduce_lr = tf.keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.3, patience=3, min_lr=1e-5)
 
-    # Budowa i trening modelu
     model = build_cnn_lstm((SEGMENT_LENGTH, 1), NUM_CLASSES)
-    model.fit(X_train, y_train, validation_data=(X_val, y_val), epochs=10, batch_size=128, callbacks=[early_stopping, reduce_lr])
+    model.fit(X_train, y_train, validation_data=(X_val, y_val), epochs=5, batch_size=128, callbacks=[early_stopping, reduce_lr])
 
-    # Ewaluacja modelu
     y_pred = model.predict(X_test)
     y_pred_classes = np.argmax(y_pred, axis=1)
     y_true = np.argmax(y_test, axis=1)
 
-    # 🔹 Statystyki
-    report = classification_report(y_true, y_pred_classes, target_names=LABEL_NAMES)
+    report = classification_report(y_true, y_pred_classes)
     print("\n📊 Statystyki modelu:\n", report)
 
-    # 🔹 Macierz pomyłek
-    plot_confusion_matrix(y_true, y_pred_classes, LABEL_NAMES)
-
-    # Zapis modelu
+    plot_confusion_matrix(y_true, y_pred_classes, labels=list(LABEL_MAP.keys()))
     model.save("ecg_classifier.h5")
-
-
 
 if __name__ == "__main__":
     train_model()

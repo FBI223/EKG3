@@ -126,13 +126,13 @@ def plot_confusion_matrix(y_true, y_pred, labels):
 
 
 
-
 def balance_classes_oversampling(X, y):
     """🔄 Oversampling klas mniejszościowych z dodanym szumem do liczby próbek klasy dominującej."""
     ros = RandomOverSampler(sampling_strategy='auto', random_state=42)
     X_resampled, y_resampled = ros.fit_resample(X.reshape(len(X), -1), y)
 
     return X_resampled.reshape(len(X_resampled), SEGMENT_LENGTH), y_resampled
+
 
 def balance_classes(X, y, class_to_reduce=0, reduction_factor=0.5):
     """🔄 Redukcja liczby segmentów klasy `class_to_reduce`."""
@@ -144,9 +144,11 @@ def balance_classes(X, y, class_to_reduce=0, reduction_factor=0.5):
 
     return X[idx_keep], y[idx_keep]
 
+
+
 def balance_classes_smart(X, y):
     """Umiarkowane balansowanie: redukcja klasy 0 + augmentacja mniejszych klas"""
-    X, y = balance_classes(X, y, class_to_reduce=0, reduction_factor=0.5)  # Redukcja klasy 0
+    X, y = balance_classes(X, y, class_to_reduce=0, reduction_factor=0.7)  # Redukcja klasy 0
 
     # Augmentacja rzadkich klas (1 i 3, bo mają niski recall)
     rare_classes = [1, 3]
@@ -165,6 +167,8 @@ def balance_classes_smart(X, y):
     X, y = X[indices], y[indices]
 
     return X, y
+
+
 def augment_signal(signal, noise_level=0.01, shift=5, scale_factor=0.05):
     """Dodaje szum, skalowanie amplitudy i przesunięcie fazowe do sygnału EKG."""
     noise = np.random.normal(0, noise_level, signal.shape)
@@ -178,6 +182,8 @@ def augment_signal(signal, noise_level=0.01, shift=5, scale_factor=0.05):
     augmented_signal = scale * augmented_signal + noise
     return augmented_signal
 
+
+
 def augment_data(X, y, augmentation_factor=2):
     """Tworzy dodatkowe próbki przez augmentację danych."""
     X_aug, y_aug = [], []
@@ -188,6 +194,7 @@ def augment_data(X, y, augmentation_factor=2):
             y_aug.append(y[i])
 
     return np.array(X_aug), np.array(y_aug)
+
 
 
 def select_best_lead(record):
@@ -377,7 +384,7 @@ def train_model():
     reduce_lr = tf.keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.3, patience=3, min_lr=1e-5)
 
     model = build_cnn_lstm((SEGMENT_LENGTH, 1), NUM_CLASSES)
-    model.fit(X_train, y_train, validation_data=(X_val, y_val), epochs=7, batch_size=256, callbacks=[early_stopping, reduce_lr])
+    model.fit(X_train, y_train, validation_data=(X_val, y_val), epochs=10, batch_size=256, callbacks=[early_stopping, reduce_lr])
 
     y_pred = model.predict(X_test)
     y_pred_classes = np.argmax(y_pred, axis=1)

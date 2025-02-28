@@ -15,6 +15,18 @@ import pywt
 from scipy.signal import butter, filtfilt, sosfilt, iirnotch
 import seaborn as sns
 import biosppy.signals.ecg as ecg
+import signal
+import sys
+import tensorflow.keras.backend as K
+import gc
+
+def cleanup_resources(signum, frame):
+    print("🛑 Przerywanie... zwalniam pamięć!")
+    K.clear_session()
+    gc.collect()
+    sys.exit(0)
+
+signal.signal(signal.SIGINT, cleanup_resources)  # Obsługa Ctrl+C
 
 # 📂 Foldery z danymi MITDB i SVDB
 MITDB_PATH = "mitdb/"
@@ -25,7 +37,7 @@ TARGET_FS = 360
 SEGMENT_LENGTH = 300  # Długość segmentu w próbkach (QRS w środku)
 
 # 🔹 Mapowanie etykiet
-LABEL_MAP = {'N': 0, 'V': 1, 'S': 2, 'L': 3, 'R': 4}
+LABEL_MAP = {'N': 0, 'V': 1, 'A': 2, 'L': 3, 'R': 4 , "J":5 , "j":6 , "F":7 , "f":8 , "S" :9 }
 LABEL_NAMES = list(LABEL_MAP.keys())  # Kolejność klas
 NUM_CLASSES = len(LABEL_MAP)
 
@@ -170,8 +182,6 @@ def load_ecg_data(db_path, record_ids):
         # 🔹 Segmentacja QRS w środku
         for i, r in enumerate(annotation.sample):
             label = annotation.symbol[i]
-            if annotation.symbol[i] in ['A', 'J']:
-                label = 'S'  # Zamiana A i J na S
             if label in LABEL_MAP:
                 start = max(0, r - SEGMENT_LENGTH // 2)
                 end = min(len(signal), r + SEGMENT_LENGTH // 2)
@@ -228,14 +238,18 @@ def build_cnn_lstm(input_shape, num_classes):
 
 
 def load_all_ecg_data(mitdb_path, svdb_path):
-    mitdb_records = sorted([f.split('.')[0] for f in os.listdir(mitdb_path) if f.endswith('.hea')])
-    svdb_records = sorted([f.split('.')[0] for f in os.listdir(svdb_path) if f.endswith('.hea')])
 
-    mitdb_signals, mitdb_labels = load_ecg_data(mitdb_path, mitdb_records)
+    svdb_records = sorted([f.split('.')[0] for f in os.listdir(svdb_path) if f.endswith('.hea')])
     svdb_signals, svdb_labels = load_ecg_data(svdb_path, svdb_records)
+
+    mitdb_records = sorted([f.split('.')[0] for f in os.listdir(mitdb_path) if f.endswith('.hea')])
+    mitdb_signals, mitdb_labels = load_ecg_data(mitdb_path, mitdb_records)
 
     X = np.concatenate((mitdb_signals, svdb_signals), axis=0)
     y = np.concatenate((mitdb_labels, svdb_labels), axis=0)
+
+    #X = mitdb_signals
+    #y = mitdb_labels
 
 
     # 🔹 Mieszanie danych zachowując przypisanie etykiet
@@ -258,7 +272,7 @@ def train_model():
     X, y = load_all_ecg_data(MITDB_PATH, SVDB_PATH)
 
 
-    X, y = balance_classes(X, y, class_to_reduce=0, reduction_factor=0.75)
+    X, y = balance_classes(X, y, class_to_reduce=0, reduction_factor=0.7)
     X, y = balance_classes_oversampling(X,y)
 
 
@@ -276,7 +290,7 @@ def train_model():
 
     # Budowa i trening modelu
     model = build_cnn_lstm((SEGMENT_LENGTH, 1), NUM_CLASSES)
-    model.fit(X_train, y_train, validation_data=(X_val, y_val), epochs=4, batch_size=64, callbacks=[early_stopping, reduce_lr])
+    model.fit(X_train, y_train, validation_data=(X_val, y_val), epochs=10, batch_size=128, callbacks=[early_stopping, reduce_lr])
 
     # Ewaluacja modelu
     y_pred = model.predict(X_test)
@@ -296,14 +310,4 @@ def train_model():
 
 
 if __name__ == "__main__":
-
-
-    gpus = tf.config.experimental.list_physical_devices('GPU')
-    if gpus:
-        try:
-            for gpu in gpus:
-                tf.config.experimental.set_memory_growth(gpu, True)
-        except RuntimeError as e:
-            print(e)
-
     train_model()

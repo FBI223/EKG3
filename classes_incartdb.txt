@@ -1,0 +1,13 @@
+Rozkład wszystkich etykiet w zbiorze INCARTDB:
+
+N: 150410
+V: 20013
+R: 3174
+A: 1944
+F: 219
+j: 92
+n: 32
+S: 16
++: 12
+Q: 6
+B: 1

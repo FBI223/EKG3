@@ -225,6 +225,25 @@ def resample_ecg_signal(signal, annotation_samples, original_fs, target_fs=TARGE
 
 
 
+def segment_ecg(signal, annotation_samples):
+    """ Tworzy segmenty EKG z QRS w środku """
+    segments, labels = [], []
+
+    for r in annotation_samples:
+        start = max(0, r - SEGMENT_LENGTH // 2)
+        end = min(len(signal), r + SEGMENT_LENGTH // 2)
+
+        segment = signal[start:end]
+
+        if len(segment) < SEGMENT_LENGTH:
+            pad_left = (SEGMENT_LENGTH - len(segment)) // 2
+            pad_right = SEGMENT_LENGTH - len(segment) - pad_left
+            segment = np.pad(segment, (pad_left, pad_right), mode='constant', constant_values=0)  # Pad z zerami
+
+        segments.append(segment)
+
+    return np.array(segments)
+
 ### 🔥 **3. Wczytywanie i przetwarzanie danych**
 def load_ecg_data(db_path, record_ids):
     signals, labels = [], []
@@ -330,32 +349,33 @@ def load_all_ecg_data(mitdb_path, svdb_path, incartdb_path):
 ### 🔥 **4. Tworzenie modelu CNN+LSTM**
 def build_cnn_lstm(input_shape, num_classes):
     model = models.Sequential([
-        layers.Conv1D(128, kernel_size=9, padding='same', activation='relu', input_shape=input_shape),
+        layers.Conv1D(64, kernel_size=9, padding='same', activation='relu', input_shape=input_shape),
         layers.BatchNormalization(),
         layers.MaxPooling1D(pool_size=2),
-        layers.Dropout(0.2),  # 🆕 Dropout dla lepszego uogólnienia
+        layers.Dropout(0.2),
 
-        layers.Conv1D(256, kernel_size=7, padding='same', activation='relu'),
+        layers.Conv1D(128, kernel_size=7, padding='same', activation='relu'),
         layers.BatchNormalization(),
         layers.MaxPooling1D(pool_size=2),
-        layers.Dropout(0.3),  # 🆕
+        layers.Dropout(0.3),
 
-        layers.Conv1D(512, kernel_size=5, padding='same', activation='relu'),
+        layers.Conv1D(256, kernel_size=5, padding='same', activation='relu'),
         layers.BatchNormalization(),
         layers.MaxPooling1D(pool_size=2),
-        layers.Dropout(0.4),  # 🆕
+        layers.Dropout(0.4),
 
         layers.LSTM(128, return_sequences=True),
-        layers.Dropout(0.5),  # 🆕 Większy dropout dla lepszej generalizacji
+        layers.Dropout(0.4),
         layers.LSTM(64, return_sequences=False),
-        layers.Dropout(0.5),  # 🆕 Większy dropout dla lepszej generalizacji
+        layers.Dropout(0.4),
 
+        layers.GlobalAveragePooling1D(),  # 🆕 Usuwa potrzebę Flatten()
         layers.Dense(128, activation='relu'),
         layers.Dropout(0.5),
         layers.Dense(num_classes, activation='softmax')
     ])
 
-    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.0003),
+    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.0005),
                   loss='categorical_crossentropy',
                   metrics=['accuracy', tf.keras.metrics.Precision(), tf.keras.metrics.Recall()])
     return model

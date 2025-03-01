@@ -51,12 +51,11 @@ LABEL_MAP = {
     'V': 2,  # Premature Ventricular Contraction (VEB)
     'E': 2,  # Ventricular Escape Beat (VEB)
 
-    'F': 3,  # Fusion of Ventricular and Normal Beat (Fusion Class)
 
-    'f': 4,  # Fusion of Paced and Normal Beat (Fusion Class)
-    'Q': 4,  # Unclassified Beats (Other)
-    '/': 4,  # Paced beat
-    '?': 4   # Beat not classified during learning
+    'f': 3,  # Fusion of Paced and Normal Beat (Fusion Class)
+    'Q': 3,  # Unclassified Beats (Other)
+    '/': 3,  # Paced beat
+    '?': 3   # Beat not classified during learning
 
 }
 
@@ -148,10 +147,10 @@ def balance_classes(X, y, class_to_reduce=0, reduction_factor=0.5):
 
 def balance_classes_smart(X, y):
     """Umiarkowane balansowanie: redukcja klasy 0 + augmentacja mniejszych klas"""
-    X, y = balance_classes(X, y, class_to_reduce=0, reduction_factor=0.7)  # Redukcja klasy 0
+    X, y = balance_classes(X, y, class_to_reduce=0, reduction_factor=0.5)  # Redukcja klasy 0
 
     # Augmentacja rzadkich klas (1 i 3, bo mają niski recall)
-    rare_classes = [1, 3]
+    rare_classes = [1]
     for cls in rare_classes:
         idx = np.where(y == cls)[0]
         if len(idx) == 0:
@@ -369,9 +368,9 @@ def train_model():
 
     # Wczytanie danych z MITDB i SVDB
     X, y = load_all_ecg_data(MITDB_PATH, SVDB_PATH, INCARTDB_PATH)
-    X, y = balance_classes_smart(X, y)  # ✅ Nowe lepsze balansowanie klas
+    #X, y = balance_classes_smart(X, y)  # ✅ Nowe lepsze balansowanie klas
 
-    #X, y = balance_classes(X, y, class_to_reduce=0, reduction_factor=0.5)
+    X, y = balance_classes(X, y, class_to_reduce=0, reduction_factor=0.5)
     #X, y = balance_classes_oversampling(X, y)
 
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, stratify=y, random_state=42)
@@ -384,7 +383,7 @@ def train_model():
     reduce_lr = tf.keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.3, patience=3, min_lr=1e-5)
 
     model = build_cnn_lstm((SEGMENT_LENGTH, 1), NUM_CLASSES)
-    model.fit(X_train, y_train, validation_data=(X_val, y_val), epochs=10, batch_size=256, callbacks=[early_stopping, reduce_lr])
+    model.fit(X_train, y_train, validation_data=(X_val, y_val), epochs=5, batch_size=256, callbacks=[early_stopping, reduce_lr])
 
     y_pred = model.predict(X_test)
     y_pred_classes = np.argmax(y_pred, axis=1)

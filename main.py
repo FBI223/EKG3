@@ -146,26 +146,22 @@ def balance_classes(X, y, class_to_reduce=0, reduction_factor=0.5):
 
 
 def balance_classes_smart(X, y):
-    """Umiarkowane balansowanie: redukcja klasy 0 + augmentacja mniejszych klas"""
-    X, y = balance_classes(X, y, class_to_reduce=0, reduction_factor=0.5)  # Redukcja klasy 0
+    """Poprawione balansowanie: mniej agresywna redukcja klasy 0 + więcej augmentacji SVEB"""
+    X, y = balance_classes(X, y, class_to_reduce=0, reduction_factor=0.6)  # Mniejsza redukcja klasy 0
 
-    # Augmentacja rzadkich klas (1 i 3, bo mają niski recall)
+    # Oversampling + augmentacja dla SVEB (klasa 1)
     rare_classes = [1]
     for cls in rare_classes:
         idx = np.where(y == cls)[0]
         if len(idx) == 0:
-            continue  # Pomijamy jeśli nie ma próbek
-
-        X_aug, y_aug = augment_data(X[idx], y[idx], augmentation_factor=3)  # Powiel 3x
+            continue
+        X_aug, y_aug = augment_data(X[idx], y[idx], augmentation_factor=4)  # 4x augmentacja
         X = np.concatenate((X, X_aug), axis=0)
         y = np.concatenate((y, y_aug), axis=0)
 
-    # Shuffle po balansowaniu
     indices = np.arange(len(X))
     np.random.shuffle(indices)
-    X, y = X[indices], y[indices]
-
-    return X, y
+    return X[indices], y[indices]
 
 
 def augment_signal(signal, noise_level=0.01, shift=5, scale_factor=0.05):
@@ -324,53 +320,42 @@ def load_all_ecg_data(mitdb_path, svdb_path, incartdb_path):
     X = (X - np.mean(X)) / np.std(X)
 
     return X, y
-
-
-### 🔥 **4. Tworzenie modelu CNN+LSTM**
 def build_cnn_lstm(input_shape, num_classes):
     model = models.Sequential([
         layers.Conv1D(128, kernel_size=9, padding='same', activation='relu', input_shape=input_shape),
         layers.BatchNormalization(),
         layers.MaxPooling1D(pool_size=2),
-        layers.Dropout(0.2),  # 🆕 Dropout dla lepszego uogólnienia
+        layers.Dropout(0.2),
 
         layers.Conv1D(256, kernel_size=7, padding='same', activation='relu'),
         layers.BatchNormalization(),
         layers.MaxPooling1D(pool_size=2),
-        layers.Dropout(0.3),  # 🆕
-
-        layers.Conv1D(512, kernel_size=5, padding='same', activation='relu'),
-        layers.BatchNormalization(),
-        layers.MaxPooling1D(pool_size=2),
-        layers.Dropout(0.4),  # 🆕
+        layers.Dropout(0.3),
 
         layers.LSTM(128, return_sequences=True),
-        layers.Dropout(0.4),  # 🆕 Większy dropout dla lepszej generalizacji
+        layers.Dropout(0.4),  # Większy dropout
         layers.LSTM(64, return_sequences=False),
-        layers.Dropout(0.4),  # 🆕 Większy dropout dla lepszej generalizacji
+        layers.Dropout(0.5),  # Jeszcze większy dropout
 
         layers.Dense(128, activation='relu'),
+        layers.BatchNormalization(),
         layers.Dropout(0.5),
         layers.Dense(num_classes, activation='softmax')
     ])
 
-    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.0003),
+    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.0001),  # 🔽 Niższy LR dla lepszego uogólnienia
                   loss='categorical_crossentropy',
                   metrics=['accuracy', tf.keras.metrics.Precision(), tf.keras.metrics.Recall()])
     return model
-
-
-
-
 
 def train_model():
     print("Czy TensorFlow widzi GPU?", tf.config.list_physical_devices('GPU'))
 
     # Wczytanie danych z MITDB i SVDB
     X, y = load_all_ecg_data(MITDB_PATH, SVDB_PATH, INCARTDB_PATH)
-    #X, y = balance_classes_smart(X, y)  # ✅ Nowe lepsze balansowanie klas
+    X, y = balance_classes_smart(X, y)  # ✅ Nowe lepsze balansowanie klas
 
-    X, y = balance_classes(X, y, class_to_reduce=0, reduction_factor=0.5)
+    #X, y = balance_classes(X, y, class_to_reduce=0, reduction_factor=0.80)
     #X, y = balance_classes_oversampling(X, y)
 
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, stratify=y, random_state=42)
@@ -383,7 +368,7 @@ def train_model():
     reduce_lr = tf.keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.3, patience=3, min_lr=1e-5)
 
     model = build_cnn_lstm((SEGMENT_LENGTH, 1), NUM_CLASSES)
-    model.fit(X_train, y_train, validation_data=(X_val, y_val), epochs=5, batch_size=256, callbacks=[early_stopping, reduce_lr])
+    model.fit(X_train, y_train, validation_data=(X_val, y_val), epochs=10, batch_size=256, callbacks=[early_stopping, reduce_lr])
 
     y_pred = model.predict(X_test)
     y_pred_classes = np.argmax(y_pred, axis=1)

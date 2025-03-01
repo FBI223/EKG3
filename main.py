@@ -14,6 +14,7 @@ import gc
 
 from cnn_model import build_cnn_lstm
 from constants import TARGET_FS, LABEL_MAP, SEGMENT_LENGTH, MITDB_PATH, SVDB_PATH, INCARTDB_PATH, NUM_CLASSES
+from data_loader import is_valid_segment
 from data_manipulation import balance_classes_smart
 from filters import filter_ecg
 from vizualizations import plot_ecg_segments, plot_confusion_matrix
@@ -88,12 +89,13 @@ def load_ecg_data(db_path, record_ids):
                 segment = signal[start:end]
                 segment_len = len(segment)
 
+
                 if segment_len < SEGMENT_LENGTH:
                     pad_left = (SEGMENT_LENGTH - segment_len) // 2
                     pad_right = SEGMENT_LENGTH - segment_len - pad_left
                     segment = np.pad(segment, (pad_left, pad_right), mode='edge')
 
-                if len(segment) == SEGMENT_LENGTH:
+                if len(segment) == SEGMENT_LENGTH and is_valid_segment(segment):
                     signals.append(segment)
                     labels.append(LABEL_MAP[label])
 

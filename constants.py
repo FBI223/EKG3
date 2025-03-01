@@ -4,6 +4,7 @@
 MITDB_PATH = "mitdb/"
 SVDB_PATH = "svdb/"
 INCARTDB_PATH = "incartdb/"
+NSTDB_PATH = "nstdb/"
 
 # 🔹 Docelowa częstotliwość próbkowania
 TARGET_FS = 360
